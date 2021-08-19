@@ -1,18 +1,21 @@
-# Textract API
+# Extraction Engine API
 
 This is the document processing API service for Extraction Engine.
 
 It uses AWS Lambda to process API queries, and connects to AWS Textract for document processing.
 
+The different Lambda functions can be found in the `lambda/` directory.
+
 ---
 
 ### Build & Deploy Project
 
-From the project root, run the following command to build the necessary files:
-`make lambda`
+for each lambda function, navigate into the directory, and run the following command: `build.sh`
 
-This will create a `build/` directory, containing a `main.zip` file.
+(If there is a 'permission denied' error, you may need to run this command first: `chmod +x build.sh`)
 
-To deploy the project, open the AWS Lambda function you wish to deploy to, and upload the `main.zip` file.
+This will create a `dist/` directory, containing a `.zip` file.
+
+To deploy the project, open the AWS Lambda function in the AWS console, and upload the `.zip` file.
 
 ---

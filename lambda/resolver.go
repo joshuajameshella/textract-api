@@ -1,4 +1,4 @@
-package internal
+package lambda
 
 import (
 	"encoding/json"

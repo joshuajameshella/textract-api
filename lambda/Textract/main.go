@@ -1,8 +1,6 @@
 package main
 
 import (
-	"textract-api/internal"
-
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 )
@@ -14,8 +12,8 @@ func main() {
 func handler(req events.APIGatewayProxyRequest) (*events.APIGatewayProxyResponse, error) {
 	switch req.HTTPMethod {
 	case "POST":
-		return internal.ProcessImage(req)
+		return ProcessImage(req)
 	default:
-		return internal.UnhandledMethod()
+		return UnhandledMethod()
 	}
 }
