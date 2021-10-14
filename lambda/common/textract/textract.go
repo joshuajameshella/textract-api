@@ -1,71 +1,118 @@
 package textract
 
 import (
-	"fmt"
+	"os"
+	"time"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/textract"
-	"os"
 )
 
-// RequestBody is the data structure sent in the API request
+// TODO:
+// Alter this to upload .json document to S3, rather than returning data via API.
+// Use websocket to update frontend on each file progress
+
+// RequestBody is the data structure sent in the API request.
 type RequestBody struct {
-	Data string `json:"data"`
-	UserID string `json:"userID"`
+	Data   []string `json:"data"`
+	UserID string   `json:"userID"`
 }
 
-// Login uses the AWS Secret Keys to create an AWS Textract client
-func Login() (*textract.Textract, error) {
-
-	// Create a new AWS credentials instance for use when making API calls
-	awsCredentials := credentials.NewStaticCredentials(
-		os.Getenv("ACCESS_KEY"),
-		os.Getenv("SECRET_KEY"),
-		"",
-	)
-
-	// Initiate a new AWS Textract session with the user info provided
-	client := textract.New(session.Must(session.NewSession(&aws.Config{
-		Region:      aws.String("eu-west-2"), // London
-		Credentials: awsCredentials,
-	})))
-
-	return client, nil
+// WordData is the data associated with each word in a document.
+type WordData struct {
+	ID         string
+	Page       int64
+	Word       string
+	Confidence float64
 }
 
-// Submit sends the encoded image data to Textract and returns the data from AWS.
-func Submit(textractClient *textract.Textract, imageData []byte) ([]string, error) {
+// Login uses the AWS Secret Keys to create an AWS Textract client.
+func Login() *textract.Textract {
+	awsCredentials := &aws.Config{
+		Credentials: credentials.NewStaticCredentials(
+			os.Getenv("ACCESS_KEY"),
+			os.Getenv("SECRET_KEY"),
+			"",
+		),
+		Region: aws.String(os.Getenv("REGION")),
+	}
+	awsSession := session.Must(session.NewSession())
+	return textract.New(awsSession, awsCredentials)
+}
 
-	resp, err := textractClient.DetectDocumentText(
-		&textract.DetectDocumentTextInput{
-			Document: &textract.Document{Bytes: imageData},
+// StartTextractProcess takes a document in S3, and begins processing it - Returns a JobID used to check progress.
+func StartTextractProcess(client *textract.Textract, documentName string) (*string, error) {
+	response, err := client.StartDocumentTextDetection(&textract.StartDocumentTextDetectionInput{
+		DocumentLocation: &textract.DocumentLocation{
+			S3Object: &textract.S3Object{
+				Bucket:  aws.String(os.Getenv("S3_BUCKET_NAME")),
+				Name:    aws.String(documentName),
+				Version: nil,
+			},
 		},
-	)
+	})
 	if err != nil {
 		return nil, err
 	}
+	return response.JobId, err
+}
 
-	// Process every word in the document, and store in a dictionary
-	words := make([]string, 0)
-	for _, block := range resp.Blocks {
+// CheckJobStatus takes a JobID, and queries AWS for the status of the extraction process.
+func CheckJobStatus(client *textract.Textract, jobID *string) (string, error) {
+	result, err := client.GetDocumentTextDetection(&textract.GetDocumentTextDetectionInput{
+		JobId: jobID,
+	})
+	return *result.JobStatus, err
+}
+
+// IsJobComplete periodically checks the job status of a given JobID.
+func IsJobComplete(client *textract.Textract, jobID *string) (bool, error) {
+	jobCompleted := false
+	status, err := CheckJobStatus(client, jobID)
+	if err != nil {
+		return false, err
+	}
+
+	for !jobCompleted {
+		time.Sleep(time.Millisecond * 500)
+		status, _ = CheckJobStatus(client, jobID)
+		jobCompleted = status == "SUCCEEDED"
+	}
+
+	return jobCompleted, nil
+}
+
+// GetJobResults retrieves the data of a completed Textract process.
+func GetJobResults(client *textract.Textract, jobID *string) ([][]WordData, error) {
+	result, err := client.GetDocumentTextDetection(&textract.GetDocumentTextDetectionInput{
+		JobId: jobID,
+	})
+
+	pageCount := 1
+	data := make([]WordData, 0)
+	for _, block := range result.Blocks {
 		if *block.BlockType == "WORD" {
-			words = append(words, *block.Text)
+			data = append(data, WordData{
+				ID:         *block.Id,
+				Page:       *block.Page,
+				Word:       *block.Text,
+				Confidence: *block.Confidence,
+			})
+		}
+		if int(*block.Page) > pageCount {
+			pageCount = int(*block.Page)
 		}
 	}
 
-	return words, err
-}
-
-// CalculateFileSize calculates the file size based on the length of data provided.
-func CalculateFileSize(imageData string) string {
-	fileSizeBytes := float64(len(imageData)) * (float64(3) / float64(4))
-	if fileSizeBytes > 1000 {
-		return fmt.Sprintf("%v KB", fileSizeBytes / 1000)
-	} else if fileSizeBytes > 1000000 {
-		return fmt.Sprintf("%v MB", fileSizeBytes / 1000000)
-	} else if fileSizeBytes > 1000000000 {
-		return fmt.Sprintf("%v GB", fileSizeBytes / 1000000000)
+	documentStructure := make([][]WordData, pageCount)
+	for _, words := range data {
+		index := int(words.Page) - 1
+		tempPageData := documentStructure[index]
+		tempPageData = append(tempPageData, words)
+		documentStructure[index] = tempPageData
 	}
-	return fmt.Sprintf("%f bytes", fileSizeBytes)
+
+	return documentStructure, err
 }

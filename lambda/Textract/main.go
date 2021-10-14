@@ -1,18 +1,16 @@
 package main
 
 import (
-	"encoding/base64"
 	"encoding/json"
-	"log"
+	"fmt"
 	"net/http"
-	"time"
+	"textract-api/lambda/common/api"
+	"textract-api/lambda/common/extractionUtils"
+	"textract-api/lambda/common/textract"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	awsTextract "github.com/aws/aws-sdk-go/service/textract"
-	"textract-api/lambda/common/api"
-	"textract-api/lambda/common/extractionUtils"
-	"textract-api/lambda/common/textract"
 )
 
 // Handler manages requests to AWS Textract
@@ -30,11 +28,7 @@ func main() {
 func (handler *Handler) handleRequest(request events.APIGatewayProxyRequest) (*events.APIGatewayProxyResponse, error) {
 
 	// Create a new AWS Textract client used for requests
-	var err error
-	if handler.client, err = textract.Login(); err != nil {
-		extractionUtils.JSONLog("Error creating Textract Client: ", err.Error())
-		return api.Response(http.StatusInternalServerError, err)
-	}
+	handler.client = textract.Login()
 
 	// Decode the request body
 	var r = textract.RequestBody{}
@@ -42,22 +36,32 @@ func (handler *Handler) handleRequest(request events.APIGatewayProxyRequest) (*e
 		return api.Response(http.StatusInternalServerError, err.Error())
 	}
 
-	start := time.Now()
 	extractionUtils.JSONLog("New request from user: ", r.UserID)
-	extractionUtils.JSONLog("File Size: ", textract.CalculateFileSize(r.Data))
 
-	// Decode the data from string to []byte, required by AWS.
-	decoded, err := base64.StdEncoding.DecodeString(r.Data)
-	if err != nil {
-		return api.Response(http.StatusInternalServerError, err.Error())
+	for _, fileName := range r.Data {
+
+		jobID, err := textract.StartTextractProcess(handler.client, fileName)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			return api.Response(http.StatusInternalServerError, err.Error())
+		}
+
+		extractionUtils.JSONLog("Job started. ID: ", *jobID)
+
+		if jobComplete, err := textract.IsJobComplete(handler.client, jobID); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			return api.Response(http.StatusInternalServerError, err.Error())
+
+		} else if jobComplete {
+
+			if _, err = textract.GetJobResults(handler.client, jobID); err != nil {
+				fmt.Printf("Error: %v\n", err)
+				return api.Response(http.StatusInternalServerError, err.Error())
+			} else {
+				// TODO: Upload data to S3, in json format
+			}
+		}
 	}
 
-	// Submit the image data to AWS Textract
-	wordData, err := textract.Submit(handler.client, decoded)
-	if err != nil {
-		return api.Response(http.StatusInternalServerError, err.Error())
-	}
-
-	log.Printf("Request took %s", time.Since(start))
-	return api.Response(http.StatusOK, wordData)
+	return api.Response(http.StatusOK, "Success")
 }
