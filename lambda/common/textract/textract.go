@@ -10,14 +10,10 @@ import (
 	"github.com/aws/aws-sdk-go/service/textract"
 )
 
-// TODO:
-// Alter this to upload .json document to S3, rather than returning data via API.
-// Use websocket to update frontend on each file progress
-
 // RequestBody is the data structure sent in the API request.
 type RequestBody struct {
-	Data   []string `json:"data"`
-	UserID string   `json:"userID"`
+	Data   string `json:"data"`
+	UserID string `json:"userID"`
 }
 
 // WordData is the data associated with each word in a document.

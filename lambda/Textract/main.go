@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"textract-api/lambda/common/api"
+	"textract-api/lambda/common/extractionS3"
 	"textract-api/lambda/common/extractionUtils"
 	"textract-api/lambda/common/textract"
 
@@ -38,29 +40,44 @@ func (handler *Handler) handleRequest(request events.APIGatewayProxyRequest) (*e
 
 	extractionUtils.JSONLog("New request from user: ", r.UserID)
 
-	for _, fileName := range r.Data {
+	// Submit the file for AWS processing.
+	jobID, err := textract.StartTextractProcess(handler.client, r.Data)
+	if err != nil {
+		extractionUtils.JSONLog("Error processing file : ", fmt.Sprintf("%v", err))
+		return api.Response(http.StatusInternalServerError, err.Error())
+	}
 
-		jobID, err := textract.StartTextractProcess(handler.client, fileName)
+	extractionUtils.JSONLog("Job started. ID: ", *jobID)
+
+	// Periodically check the status of the textract process running in AWS, using the jobID
+	jobComplete, err := textract.IsJobComplete(handler.client, jobID)
+	if err != nil {
+		extractionUtils.JSONLog("Error checking job status : ", fmt.Sprintf("%v", err))
+		return api.Response(http.StatusInternalServerError, err.Error())
+	}
+
+	// When the textract process is complete, get the job results, marshall into []byte data, and upload to S3.
+	if jobComplete {
+		data, err := textract.GetJobResults(handler.client, jobID)
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
+			extractionUtils.JSONLog("Error retrieving job data : ", fmt.Sprintf("%v", err))
 			return api.Response(http.StatusInternalServerError, err.Error())
 		}
 
-		extractionUtils.JSONLog("Job started. ID: ", *jobID)
-
-		if jobComplete, err := textract.IsJobComplete(handler.client, jobID); err != nil {
-			fmt.Printf("Error: %v\n", err)
+		processedData, err := json.Marshal(data)
+		if err != nil {
+			extractionUtils.JSONLog("Error converting struct to json : ", fmt.Sprintf("%v", err))
 			return api.Response(http.StatusInternalServerError, err.Error())
-
-		} else if jobComplete {
-
-			if _, err = textract.GetJobResults(handler.client, jobID); err != nil {
-				fmt.Printf("Error: %v\n", err)
-				return api.Response(http.StatusInternalServerError, err.Error())
-			} else {
-				// TODO: Upload data to S3, in json format
-			}
 		}
+
+		processedFileName := fmt.Sprintf("%v.json", strings.Split(r.Data, ".")[0])
+
+		if err = extractionS3.UploadToS3(processedData, processedFileName); err != nil {
+			extractionUtils.JSONLog("Error uploading json data : ", fmt.Sprintf("%v", err))
+			return api.Response(http.StatusInternalServerError, err.Error())
+		}
+
+		extractionUtils.JSONLog("File successfully processed! ", processedFileName)
 	}
 
 	return api.Response(http.StatusOK, "Success")
