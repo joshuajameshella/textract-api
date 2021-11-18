@@ -26,8 +26,30 @@ func main() {
 	lambda.Start(handler.handleRequest)
 }
 
+// Limit the number of requests per user per day to avoid huge Textract bills.
+func canRun(IPAddress string) bool {
+	count, err := extractionUtils.CountIPEvents(IPAddress)
+	if err != nil {
+		fmt.Printf("Failed to count events for IP address: %v : %v\n", IPAddress, err)
+		return true
+	}
+	return count < 10
+}
+
 // handleRequest takes the request body and performs the necessary commands
 func (handler *Handler) handleRequest(request events.APIGatewayProxyRequest) (*events.APIGatewayProxyResponse, error) {
+	IPAddress := request.RequestContext.Identity.SourceIP
+
+	// Check that the source of the request is allowed.
+	if !canRun(IPAddress) {
+		fmt.Printf("Too Many Requests - Request denied for IP: %v\n", request.RequestContext.Identity.SourceIP)
+		return api.Response(http.StatusTooManyRequests, nil)
+	}
+
+	// Log the event from this IP address in DynamoDB.
+	if err := extractionUtils.CreateIPEvent(IPAddress); err != nil {
+		fmt.Printf("Unable to insert event log for IP Address: %v : %v\n", IPAddress, err)
+	}
 
 	// Create a new AWS Textract client used for requests
 	handler.client = textract.Login()
@@ -72,7 +94,7 @@ func (handler *Handler) handleRequest(request events.APIGatewayProxyRequest) (*e
 
 		processedFileName := fmt.Sprintf("%v.json", strings.Split(r.Data, ".")[0])
 
-		if err = extractionS3.UploadToS3(processedData, processedFileName); err != nil {
+		if err = extractionS3.UploadFile(processedData, processedFileName); err != nil {
 			extractionUtils.JSONLog("Error uploading json data : ", fmt.Sprintf("%v", err))
 			return api.Response(http.StatusInternalServerError, err.Error())
 		}

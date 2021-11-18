@@ -10,8 +10,8 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
-// S3Client uses the AWS Secret Keys to create an AWS S3 client.
-func S3Client() *s3manager.Uploader {
+// S3Session uses the AWS Secret Keys to create an AWS S3 session.
+func S3Session() *session.Session {
 	awsSession := session.Must(session.NewSessionWithOptions(session.Options{
 		Config: aws.Config{
 			Credentials: credentials.NewStaticCredentials(
@@ -22,14 +22,14 @@ func S3Client() *s3manager.Uploader {
 			Region: aws.String(os.Getenv("REGION")),
 		},
 	}))
-	return s3manager.NewUploader(awsSession)
+
+	return awsSession
 }
 
-// UploadToS3 takes the file contents and file name, and uploads to S3.
-func UploadToS3(data []byte, filename string) error {
-
+// UploadFile takes the file contents and file name, and uploads to S3.
+func UploadFile(data []byte, filename string) error {
+	uploader := s3manager.NewUploader(S3Session())
 	reader := strings.NewReader(string(data))
-	uploader := S3Client()
 
 	_, err := uploader.Upload(&s3manager.UploadInput{
 		Bucket: aws.String(os.Getenv("S3_BUCKET_NAME")),
