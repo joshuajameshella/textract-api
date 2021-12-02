@@ -1,4 +1,4 @@
-# Extraction Engine API
+# Textract API
 
 This is the document processing API service for Extraction Engine.
 
